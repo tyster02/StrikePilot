@@ -297,7 +297,8 @@ void renameFile(fs::FS &fs, const char *path1, const char *path2) {
   }
 }
 // Function to save a 2D array to SD card
-void saveArrayToFile(fs::FS &fs, const char *path, int array[][2], int rows) {
+// Function to save a 2D array to SD card (3 columns version)
+void saveArrayToFile(fs::FS &fs, const char *path, int array[][3], int rows) {
   Serial.printf("Saving %d rows to file: %s\n", rows, path);
   
   if(fs.exists(path)) {
@@ -313,7 +314,9 @@ void saveArrayToFile(fs::FS &fs, const char *path, int array[][2], int rows) {
   for(int i = 0; i < rows; i++) {
     file.print(array[i][0]);
     file.print(",");
-    file.println(array[i][1]);
+    file.print(array[i][1]);
+    file.print(",");
+    file.println(array[i][2]);
   }
   
   file.close();
@@ -332,39 +335,20 @@ Adafruit_VL53L0X tof1 = Adafruit_VL53L0X();
 Adafruit_VL53L0X tof2 = Adafruit_VL53L0X();
 
 // Function to get simultaneous measurements from both sensors
+// Function to get simultaneous measurements from both sensors
+// Simpler version - just read both sensors
 bool getSimultaneousMeasurements(uint16_t &dist1, uint16_t &dist2) {
-  // Stop both sensors
-  sensor1.stopContinuous();
-  sensor2.stopContinuous();
+  bool s1_ready = tof1.isRangeComplete();
+  bool s2_ready = tof2.isRangeComplete();
   
-  delay(10);  // Brief pause
-  
-  // Critical section - start both at same time
-  noInterrupts();
-  sensor1.startRangeContinuous();
-  sensor2.startRangeContinuous();
-  interrupts();
-  
-  // Wait for both to complete first measurement
-  unsigned long timeout = millis() + 50;
-  bool s1_ready = false;
-  bool s2_ready = false;
-  
-  while ((!s1_ready || !s2_ready) && millis() < timeout) {
-    if (!s1_ready) s1_ready = sensor1.isRangeComplete();
-    if (!s2_ready) s2_ready = sensor2.isRangeComplete();
-  }
-  
-  // Read both measurements if ready
   if (s1_ready && s2_ready) {
-    dist1 = sensor1.readRange();
-    dist2 = sensor2.readRange();
+    dist1 = tof1.readRange();
+    dist2 = tof2.readRange();
     return true;
   }
   
-  return false;  // Timeout
+  return false;
 }
-
 
 
 //6. RTC
@@ -462,7 +446,7 @@ void setup() {
   // Optional: Start serial monitor for debugging
   Serial.begin(115200);
   delay(2000);
-  Wire.begin(21,22); //SDA/SCL
+  //Wire.begin(21,22); //SDA/SCL
 
   // Initialize pins
   
@@ -629,24 +613,27 @@ void handleCalibration() {
 
   delay(2000);
 
-  int distance1 = 0;
-  int distance2=0;
+  uint16_t distance1 = 0;
+  uint16_t distance2=0;
   int rowtimer = 0;
   int dataArray [100][3];
   //While the button
   do {
     //take a tof measurement
     //serial print the measurement
-    if(tof1.isRangeComplete()){
-      uint16_t distanceMM = lox.readRange();
-      distance = distanceMM;
-    }
-    dataArray[rowtimer][0]=rowtimer;
-    dataArray[rowtimer][1]=distance;
+    if(getSimultaneousMeasurements(distance1, distance2)){
 
-    Serial.println(distance);
+    dataArray[rowtimer][0]=rowtimer;
+    dataArray[rowtimer][1]=distance1;
+    dataArray[rowtimer][2]=distance2;
+
+    Serial.println(distance1);
     delayMicroseconds(100);
     rowtimer++;
+  }
+  else {
+      yield();  // Also yield on timeout
+    }
   }
   //check the button isn't being read
   while(rowtimer<100);
