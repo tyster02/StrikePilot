@@ -329,21 +329,22 @@ void saveArrayToFile(fs::FS &fs, const char *path, int array[][3], int rows) {
 #define I2C_SDA_2 25
 #define I2C_SCL_2 33
 
+
 TwoWire I2C_1 = TwoWire(0);
 TwoWire I2C_2 = TwoWire(1);
 Adafruit_VL53L0X tof1 = Adafruit_VL53L0X();
 Adafruit_VL53L0X tof2 = Adafruit_VL53L0X();
 
-// Function to get simultaneous measurements from both sensors
-// Function to get simultaneous measurements from both sensors
-// Simpler version - just read both sensors
+// Function to get simultaneous measurements from both sensors, output in mm
 bool getSimultaneousMeasurements(uint16_t &dist1, uint16_t &dist2) {
-  bool s1_ready = tof1.isRangeComplete();
-  bool s2_ready = tof2.isRangeComplete();
+  int tof1_calibration = 0;
+  int tof2_calibration = 0;
+  bool tof1_ready = tof1.isRangeComplete();
+  bool tof2_ready = tof2.isRangeComplete();
   
-  if (s1_ready && s2_ready) {
-    dist1 = tof1.readRange();
-    dist2 = tof2.readRange();
+  if (tof1_ready && tof2_ready) {
+    dist1 = tof1.readRange()+tof1_calibration;
+    dist2 = tof2.readRange()+tof2_calibration;
     return true;
   }
   
@@ -440,7 +441,13 @@ Adafruit_Thermal printer(&Serial2);  // Use Serial2
 #define ButtonB 4
 
 
-
+//Geometrical Dimensions
+int tof1_a = 1; //height of top sensor above equator [mm]
+int tof2_b = 0;// height of bottom sensor above equatora [mm]
+uint16_t lane_gap = 0; // [mm]
+uint16_t radius = 108; // [mm]
+uint16_t calibration_board = 15; // dimensionless
+uint16_t cal_board_dist = (calibration_board - 0.5)*25.4;
 
 void setup() {
   // Optional: Start serial monitor for debugging
@@ -521,8 +528,8 @@ void setup() {
   pinMode(BLUE, OUTPUT);
 
   //Buttons
-  pinMode(ButtonA, INPUT);
-  pinMode(ButtonB, INPUT);
+  pinMode(ButtonA, INPUT_PULLUP);
+  pinMode(ButtonB, INPUT_PULLUP);
   digitalWrite(ButtonB, HIGH);
   digitalWrite(ButtonB, HIGH);
 
@@ -566,18 +573,18 @@ if(!SD.begin(SD_CS)) {
 void loop() {
   // State machine - execute code based on current state
   switch (currentState) {
-    
+    case DEVELOPER:
+      handleDeveloper();
+      break;
+  
     case CALIBRATION:
       handleCalibration();
       break;
      
-    case IDLE:
-      handleIdle();
+    case MEASUREMENT:
+      handleMeasurement();
       break;
  /*    
-    case STATE_MEASURE:
-      handleMeasure();
-      break;
       
     case STATE_PROCESS_DATA:
       handleProcessData();
@@ -591,61 +598,69 @@ void loop() {
       handleError();
       break;
       
-    case STATE_IDLE:
-      handleIdle();
-      break;
+
   */    
-    default:
-      // Should never get here, but safe fallback
-      Serial.println("Unknown state!");
-      break;
   }
 }
 
 // ===== STATE HANDLER FUNCTIONS =====
 
+void handleDeveloper() {
+Serial.print(cal_board_dist);
+delay(1000000);
+}
+
 void handleCalibration() {
-  Serial.println("Calibrating...");
-  Display(97);
-  analogWrite(RED, 0); // red
-  analogWrite(GREEN, 0); // green initially OFF
+
+  analogWrite(RED, 0); //Full Red
+  analogWrite(GREEN, 0); //Full Green -> Full Yellow
   analogWrite(BLUE,255);
 
+  delay(200);
+  Display(97); //Displays calibration symbol
+  
   delay(2000);
+  Display(15); //Displays the board to hit
 
   uint16_t distance1 = 0;
-  uint16_t distance2=0;
-  int rowtimer = 0;
-  int dataArray [100][3];
-  //While the button
+  uint16_t distance2 = 0;
+
   do {
-    //take a tof measurement
-    //serial print the measurement
+    //take bot tof measurements [mm]
     if(getSimultaneousMeasurements(distance1, distance2)){
-
-    dataArray[rowtimer][0]=rowtimer;
-    dataArray[rowtimer][1]=distance1;
-    dataArray[rowtimer][2]=distance2;
-
-    Serial.println(distance1);
     delayMicroseconds(100);
-    rowtimer++;
   }
-  else {
-      yield();  // Also yield on timeout
+  }
+  //check the button isn't being read. As soon as it goes LOW, it's read.
+  while(digitalRead(ButtonA)==HIGH);
+  
+  // gap to lane [mm]
+  uint16_t lane_gap = ((distance1*distance1)-(distance2*distance2)+(tof_a*tof_a)-(tof_b*tof_b))/(2*(distance1-distance2)) - (cal_board_dist)
+  
+  do {
+    //take bot tof measurements
+    if(getSimultaneousMeasurements(distance1, distance2)){
+    delayMicroseconds(500);
+    int live_cal_board = ((((distance1*distance1)-(distance2*distance2)+(tof_a*tof_a)-(tof_b*tof_b))/(2*(distance1-distance2))-(lane_gap))/25.4)
+    Display(live_cal_board);
+    if(digitalRead(ButtonB)== LOW){
+      uint16_t lane_gap = ((distance1*distance1)-(distance2*distance2)+(tof_a*tof_a)-(tof_b*tof_b))/(2*(distance1-distance2)) - (cal_board_dist)
+      Display(15);
     }
   }
-  //check the button isn't being read
-  while(rowtimer<100);
-
-  delay(100);
-  digitalWrite(SD_CS, HIGH);
-  delay(10);
-  saveArrayToFile(SD, "/test2.txt",dataArray,rowtimer);
+  }
+  //check the button isn't being read. As soon as it goes LOW, it's read.
+  while(digitalRead(ButtonA)==HIGH);
+  
+  analogWrite(RED, 255); 
+  analogWrite(GREEN, 0); //Full Green
+  analogWrite(BLUE,255);
+  delay(2000);
+  analogWrite(GREEN, 255);
   currentState = IDLE;
 }
 
-void handleIdle(){
+void handleMeasurement(){
 Serial.print("In Idle Mode");
 delay(1000000);
 currentState=IDLE;
